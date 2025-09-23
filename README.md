@@ -64,8 +64,6 @@ You can customize the build with the following CMake options:
 
 ---
 
----
-
 ## 🧩 Using Pulse in your project
 
 ### Via `find_package` (after `install`)
