@@ -1,0 +1,5 @@
+add_executable(pulse_example_operators_demo
+  ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+)
+target_link_libraries(pulse_example_operators_demo PRIVATE Pulse)
+target_compile_features(pulse_example_operators_demo PRIVATE cxx_std_20)

@@ -1,0 +1,5 @@
+add_executable(pulse_example_search_with_cancel
+  ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+)
+target_link_libraries(pulse_example_search_with_cancel PRIVATE Pulse)
+target_compile_features(pulse_example_search_with_cancel PRIVATE cxx_std_20)
