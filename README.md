@@ -43,11 +43,11 @@ It allows you to connect parts of your application with data streams (`observabl
 ## 🔧 Installation
 
 ```bash
-git clone https://github.com/yourname/pulse.git
+git clone https://github.com/danrom11/Pulse.git
 cd pulse
 cmake -S . -B build
 cmake --build build -j
-cmake --install build --prefix <install dir>
+cmake --install build --prefix /your/install/path
 ```
 
 ## ⚙️ Build Options
