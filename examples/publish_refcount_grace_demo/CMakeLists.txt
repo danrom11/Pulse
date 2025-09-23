@@ -1,0 +1,6 @@
+add_executable(pulse_example_publish_refcount_grace
+  ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+)
+target_link_libraries(pulse_example_publish_refcount_grace PRIVATE Pulse)
+target_compile_features(pulse_example_publish_refcount_grace PRIVATE cxx_std_20)
+
