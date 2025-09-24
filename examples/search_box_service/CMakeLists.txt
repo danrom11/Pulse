@@ -1,6 +1,6 @@
 add_executable(pulse_example_search_box_service
   ${CMAKE_CURRENT_LIST_DIR}/main.cpp
 )
-target_link_libraries(pulse_example_search_box_service PRIVATE Pulse)
+target_link_libraries(pulse_example_search_box_service PRIVATE Pulse::pulse)
 target_compile_features(pulse_example_search_box_service PRIVATE cxx_std_20)
 

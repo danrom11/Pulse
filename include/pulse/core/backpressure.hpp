@@ -1,13 +1,10 @@
 #pragma once
 #include <atomic>
+#include <array>
 #include <cstddef>
 #include <mutex>
 #include <optional>
 #include <deque>
-#include <optional>
-#include <mutex>
-#include <atomic>
-#include <cstddef>
 #include <thread>
 #include <chrono>
 

@@ -22,7 +22,7 @@ add_executable(pulse_example_qt_search
 
 target_link_libraries(pulse_example_qt_search
   PRIVATE
-    Pulse
+    Pulse::pulse
     ${PULSE_QT_CORE}
     ${PULSE_QT_WIDGETS}
 )
