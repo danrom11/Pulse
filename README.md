@@ -36,7 +36,7 @@ It allows you to connect parts of your application with data streams (`observabl
 ### Optional dependencies
 
 - **Qt** — if `-DPULSE_WITH_QT=ON` (for `adapters/qt.hpp`)
-- **GoogleTest** — if `-DPULSE_BUILD_TESTS=ON`
+- **CTest** — if `-DPULSE_BUILD_TESTS=ON`
 - **Google Benchmark** — if `-DPULSE_BUILD_BENCHMARKS=ON`
 
 
