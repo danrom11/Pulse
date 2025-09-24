@@ -57,7 +57,7 @@ You can customize the build with the following CMake options:
 | Option                   | Default | Description                                               |
 | ------------------------ | ------- | --------------------------------------------------------- |
 | `PULSE_WITH_QT`          | `OFF`   | Enable Qt adapters (`adapters/qt.hpp`). Requires Qt.      |
-| `PULSE_BUILD_TESTS`      | `ON`    | Build unit tests (requires GTest).                        |
+| `PULSE_BUILD_TESTS`      | `ON`    | Build unit tests.                                         |
 | `PULSE_BUILD_EXAMPLES`   | `ON`    | Build example programs.                                   |
 | `PULSE_BUILD_BENCHMARKS` | `OFF`   | Build benchmarks (requires Google Benchmark).             |
 | `PULSE_TRACE`            | `OFF`   | Enable tracing hooks (experimental, not yet implemented). |
