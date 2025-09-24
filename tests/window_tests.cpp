@@ -72,7 +72,7 @@ int main() {
     });
 
     int outer_seen = 0;
-    subscription sub = (src | window(5)).subscribe(
+    subscription sub = (src | window(5) | take(1)).subscribe(
       [&](observable<int> inner){
         ++outer_seen;
         // we subscribe to the window, but as soon as we receive the first one, we unsubscribe from the outside
@@ -80,7 +80,7 @@ int main() {
           int cnt = 0;
           auto isub = inner.subscribe([&](int){ ++cnt; });
           (void)isub;
-          sub.reset(); // unsubscribe
+          //sub.reset(); // unsubscribe, removed due to UB on Windows (OS) MSVC. Added take(1)
         }
       }
     );
