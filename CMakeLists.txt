@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Pulse VERSION 0.1.0 LANGUAGES CXX)
+project(Pulse VERSION 0.1.1 LANGUAGES CXX)
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in
+  ${CMAKE_CURRENT_BINARY_DIR}/include/pulse/version.hpp
+  @ONLY
+)
 
 # -------------------------------
 # Options
@@ -27,6 +33,12 @@ target_include_directories(pulse
 
 target_compile_features(pulse INTERFACE cxx_std_20)
 
+target_include_directories(pulse INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
 # Public API definitions
 target_compile_definitions(pulse
   INTERFACE
@@ -49,6 +61,12 @@ install(TARGETS pulse
   INCLUDES DESTINATION include
 )
 install(DIRECTORY include/ DESTINATION include)
+
+install(DIRECTORY include/ DESTINATION include)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/include/pulse/version.hpp
+  DESTINATION include/pulse
+)
 
 # Export targets (for the installed package)
 install(EXPORT PulseTargets
@@ -89,25 +107,50 @@ install(FILES
 # --------------------------------
 # Examples and Tests
 # --------------------------------
-if (PULSE_BUILD_EXAMPLES)
-  add_subdirectory(examples)
-endif()
-
 if (PULSE_BUILD_TESTS)
   include(CTest)
   enable_testing()
+
   add_subdirectory(tests)
 
-  add_custom_target(run_tests ALL
+  get_property(_tests_dir_targets
+               DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tests"
+               PROPERTY  BUILDSYSTEM_TARGETS)
+
+  set(PULSE_TEST_TARGETS "")
+  foreach(t IN LISTS _tests_dir_targets)
+    get_target_property(_type "${t}" TYPE)
+    if(_type STREQUAL "EXECUTABLE" AND t MATCHES "^pulse_.*_tests$")
+      list(APPEND PULSE_TEST_TARGETS "${t}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES PULSE_TEST_TARGETS)
+  list(SORT PULSE_TEST_TARGETS)
+  message(STATUS "Found test executables: ${PULSE_TEST_TARGETS}")
+
+  add_custom_target(build_tests
+    DEPENDS ${PULSE_TEST_TARGETS}
+    COMMENT "Building Pulse test executables"
+  )
+
+  add_custom_target(check ALL
     COMMAND ${CMAKE_CTEST_COMMAND}
+            --force-new-ctest-process
             --output-on-failure
             -C $<CONFIG>
             --test-dir "${CMAKE_BINARY_DIR}"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     USES_TERMINAL
+    DEPENDS build_tests
     COMMENT "Running Pulse tests via CTest"
-    DEPENDS ${PULSE_TEST_TARGETS}
   )
+endif()
+
+# -------------------------------
+# Examples / Benchmarks
+# -------------------------------
+if (PULSE_BUILD_EXAMPLES)
+  add_subdirectory(examples)
 endif()
 
 if (PULSE_BUILD_BENCHMARKS)
