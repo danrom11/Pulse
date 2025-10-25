@@ -83,7 +83,7 @@ target_link_libraries(your_target PRIVATE Pulse::pulse)
 include(FetchContent)
 FetchContent_Declare(
   pulse
-  GIT_REPOSITORY https://github.com/yourname/pulse.git
+  GIT_REPOSITORY https://github.com/danrom11/Pulse.git
   GIT_TAG main
 )
 FetchContent_MakeAvailable(pulse)

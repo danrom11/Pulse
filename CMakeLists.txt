@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Pulse VERSION 0.1.1 LANGUAGES CXX)
+project(Pulse VERSION 0.1.2 LANGUAGES CXX)
 
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in
@@ -137,7 +137,6 @@ if (PULSE_BUILD_TESTS)
     COMMAND ${CMAKE_CTEST_COMMAND}
             --force-new-ctest-process
             --output-on-failure
-            -C $<CONFIG>
             --test-dir "${CMAKE_BINARY_DIR}"
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     USES_TERMINAL
