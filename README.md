@@ -7,18 +7,22 @@ It allows you to connect parts of your application with data streams (`observabl
 
 ## ✨ Features
 
-- `observable<T>` — data stream of any type  
-- `topic<T>` — event bus for publishing values  
-- Rich set of operators:  
-  `map`, `filter`, `debounce`, `distinct_until_changed`,  
-  `combine_latest`, `switch_map`, `take`, `zip`,  
-  `publish`, `ref_count`, `timeout`,  
-  `throttle`, `throttle_latest`, `buffer`, `window`,  
-  `merge`, `concat_map`, `observe_on` and more  
-- Timers and intervals: `timer()`, `interval()`  
-- Subscription management (`subscription`)  
-- Hot and cold observables (`publish`, `ref_count`, `ref_count(grace)`)  
-- Simple executors (`inline_executor`, `thread_pool`)  
+- `observable<T>` — data stream of any type, plus sources: `just`, `from`, `range`, `empty`, `never`, `error`, `defer`
+- `topic<T>` — thread-safe event bus with per-subscriber executor, priority and backpressure
+- `subject<T>` / `behavior_subject<T>` — hot sources (the latter replays the current value)
+- **Object interaction (Qt-like, but simpler):**
+  `signal<Args...>` + `connection`, `property<T>` with change notification and bindings, `computed<T>`
+- Rich set of operators:
+  `map`, `filter`, `tap`, `scan`, `reduce`, `skip`, `take`, `take_while`, `take_until`, `first`, `last`,
+  `distinct`, `distinct_until_changed`, `pairwise`, `start_with`, `buffer`, `window`,
+  `debounce`, `throttle`, `throttle_latest`, `delay`, `timeout`,
+  `switch_map`, `concat_map`, `flat_map`, `merge`, `combine_latest`, `with_latest_from`, `zip`,
+  `retry`, `catch_error`, `on_error_return`, `default_if_empty`, `finally_do`,
+  `share`, `publish`, `ref_count`, `ref_count(grace)`, `observe_on`, `subscribe_on`
+- Timers and intervals: `timer()`, `interval()`, `post_delayed()` — all driven by **one** shared
+  `timer_service` thread (no thread per event)
+- RAII subscriptions (`subscription`, `composite_subscription` / `subscription_bag`)
+- Executors: `inline_executor`, `strand`, `thread_pool`
 
 ---
 
@@ -54,13 +58,18 @@ cmake --install build --prefix /your/install/path
 
 You can customize the build with the following CMake options:
 
-| Option                   | Default | Description                                               |
-| ------------------------ | ------- | --------------------------------------------------------- |
-| `PULSE_WITH_QT`          | `OFF`   | Enable Qt adapters (`adapters/qt.hpp`). Requires Qt.      |
-| `PULSE_BUILD_TESTS`      | `ON`    | Build unit tests.                                         |
-| `PULSE_BUILD_EXAMPLES`   | `ON`    | Build example programs.                                   |
-| `PULSE_BUILD_BENCHMARKS` | `OFF`   | Build benchmarks (requires Google Benchmark).             |
-| `PULSE_TRACE`            | `OFF`   | Enable tracing hooks (experimental, not yet implemented). |
+| Option                     | Default          | Description                                          |
+| -------------------------- | ---------------- | ---------------------------------------------------- |
+| `PULSE_WITH_QT`            | `OFF`            | Enable Qt adapters (`adapters/qt.hpp`). Requires Qt. |
+| `PULSE_BUILD_TESTS`        | top-level only   | Build unit tests.                                    |
+| `PULSE_BUILD_EXAMPLES`     | top-level only   | Build example programs.                              |
+| `PULSE_BUILD_BENCHMARKS`   | `OFF`            | Build benchmarks (requires Google Benchmark).        |
+| `PULSE_RUN_TESTS_ON_BUILD` | `OFF`            | Run the test suite as part of the default target.    |
+| `PULSE_INSTALL`            | top-level only   | Generate install / export rules.                     |
+
+When Pulse is added with `add_subdirectory` / `FetchContent`, tests and examples are off by
+default, so it does not slow down or interfere with the parent build. Run the tests with
+`cmake --build build --target check`.
 
 ---
 
@@ -173,6 +182,57 @@ box.type("query");
 
 ---
 
+## 🔗 Object interaction: signals, properties, bindings
+
+Pulse is first of all about **objects talking to each other**. For that you rarely need a full
+stream pipeline — signals and properties are enough, and they plug into observables when you do.
+
+```cpp
+#include <pulse/pulse.hpp>
+
+struct Player {
+  pulse::property<int> score{0};      // value + change notification
+  pulse::signal<std::string> died;    // event
+};
+
+struct Hud {
+  pulse::property<std::string> label;
+};
+
+Player p;
+Hud hud;
+
+// one-way binding with a transform
+hud.label.bind(p.score, [](int s) { return "Score: " + std::to_string(s); });
+
+// classic connection (copyable handle, does not disconnect on destruction)
+auto c = p.died.connect([](const std::string& why) { std::cout << "died: " << why << "\n"; });
+
+// RAII connection
+pulse::scoped_connection sc = p.score.changed.connect([](int s) { /* ... */ });
+
+// derived value
+pulse::computed<bool> high([&] { return p.score.get() > 100; }, p.score);
+
+p.score = 150;          // hud.label == "Score: 150", high == true
+p.died.emit("lava");
+
+// everything is also a stream
+auto sub = (p.score.as_observable() | pulse::filter([](int s) { return s % 10 == 0; }))
+               .subscribe([](int s) { /* ... */ });
+```
+
+* `signal<Args...>` — thread-safe and re-entrant; a slot disconnected during an emit is not called
+  afterwards; connections may outlive the signal. Queued delivery: `sig.connect(executor, fn)`.
+* `property<T>` — emits `changed` only when the value really changes; `bind`, `bind_bidirectional`,
+  `map`, `update`, `as_observable()` (current value + changes).
+* `computed<T>` — read-only property recomputed when any of its sources change.
+
+> Tip: with `using namespace pulse;` prefer writing `pulse::signal` — the C runtime also declares a
+> global `::signal()` function.
+
+---
+
 ## ⚡️ Hot vs Cold Observables
 
 By default, an `observable` is “cold”: each subscriber restarts it.  
@@ -225,17 +285,20 @@ sub.reset(); // unsubscribe
 
 ## 🏗 Architecture
 
-* **observable<T>** — stream declaration  
-* **subscription** — subscription management  
-* **topic<T>** — event bus  
-* **executor / thread_pool** — execution context  
-* **publish / ref_count** — hot sharing  
+* **observable<T>** — stream declaration (cold by default)
+* **subscription / composite_subscription** — RAII cancellation
+* **topic<T>, subject<T>, behavior_subject<T>** — hot sources; subscriptions hold only weak
+  references, so destroying the source while subscriptions exist is safe
+* **signal / property / computed** — object interaction layer
+* **executor / strand / thread_pool** — execution context
+* **timer_service** — one background thread for every time-based operator
+* **publish / ref_count / share** — hot sharing
 
 ---
 
 ## 🧪 Testing
 
-The project includes unit tests (`CTest` + `assert`).  
+The project includes unit tests (`CTest` + `assert`; asserts stay enabled in Release builds of the tests).
 
 ```bash
 cmake -S . -B build -DPULSE_BUILD_TESTS=ON
@@ -341,14 +404,49 @@ Pull requests are welcome!
 
 ---
 
+## 📝 Changelog
+
+### 0.2.0
+
+**New**
+- `signal<Args...>`, `connection`, `scoped_connection`, `property<T>`, `computed<T>`
+- `behavior_subject<T>`, sources `just / from / range / empty / never / error / defer`
+- Operators: `tap`, `scan`, `reduce`, `pairwise`, `skip`, `skip_while`, `take_while`, `take_until`,
+  `first`, `last`, `distinct`, `delay`, `with_latest_from`, `flat_map`, `catch_error`,
+  `on_error_return`, `default_if_empty`, `finally_do`, 3/4-ary `combine_latest`, pipeable `share()`
+- `timer_service` + `post_delayed`; `timeout_error` type
+
+**Fixed**
+- `combine_latest` / `zip` captured the combiner by reference into the observable (dangling when the
+  observable was a temporary); `zip` could complete twice and called `on_done` under its mutex
+- `window` kept references to locals of the subscribe call (undefined behaviour for async sources)
+- `distinct_until_changed` and `debounce` shared state between all subscribers
+- `throttle` / `throttle_latest` slept *inside* the executor (froze UI threads) and ignored unsubscribe
+- `timeout` passed only the first value and kept firing after unsubscribe
+- `debounce` delivered values after unsubscribe and dropped the pending value on completion
+- `retry` leaked through a self-referencing `shared_ptr`, and could cancel a live attempt
+- `switch_map` completed on inner completion and did not cancel the inner stream on unsubscribe
+- `topic` was not thread-safe, ignored the passed backpressure policy instance (e.g. `bp_buffer{2}`),
+  crashed on re-entrant publish and when subscriptions outlived it; queued deliveries now skip
+  unsubscribed handlers
+- `subject` subscriptions dangled when the subject was destroyed
+- `subscription::cancel_on_destruct(false)` was ignored
+- `ref_count` lost values of synchronous sources; `share` grew without bound and replaced the original
+  error with a generic one; `bp_batch_count_or_timeout_nms` used a moved-from handler
+- Timers no longer spawn a thread per event
+- CMake: duplicated install rules, undefined `PULSE_TRACE`, tests running on every build when used as
+  a subproject, `CmakeLists.txt` casing
+
+---
+
 ## 🛣 Roadmap
 
 - [ ]   Support for custom executors (asio, libuv)
-- [ ]   Support for the stdexec.hpp adapter
+- [ ]   Support for the stdexec adapter
 - [ ]   Tracing hooks
-- [ ]   Additional operators (`group_by`, `replay`, and others)
+- [ ]   Additional operators (`group_by`, `replay`, ...)
 - [ ]   Doxygen-style documentation
-- [ ]   More examples of integration with the Qt UI framework  
+- [x]   UI integration: see [PulseUI](https://github.com/danrom11/PulseUI)
 
 ---
 

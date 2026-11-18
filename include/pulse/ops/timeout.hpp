@@ -1,58 +1,115 @@
 #pragma once
-#include <pulse/core/observable.hpp>
-#include <chrono>
-#include <thread>
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
+
+#include <pulse/core/observable.hpp>
+#include <pulse/core/scheduler.hpp>
+#include <pulse/core/subscription.hpp>
 
 namespace pulse {
 
-// If the source does not return a completion value/event in time, generate on_error(timeout)
+struct timeout_error : std::runtime_error {
+  timeout_error() : std::runtime_error("pulse::timeout") {}
+};
+
+// timeout(d): errors with timeout_error if no event arrives within `d`
+// after subscription, or within `d` after the previous value (idle timeout).
+// All values pass through until then. The timer is cancelled on unsubscribe.
 template <class Rep, class Period>
 struct op_timeout {
-  std::chrono::duration<Rep,Period> d;
+  std::chrono::duration<Rep, Period> d;
 
   template <class T>
   auto operator()(const observable<T>& src) const {
-    using namespace std::chrono;
+    return observable<T>::create([src, d = d](auto on_next, auto on_err, auto on_done) {
+      struct state {
+        std::mutex m;
+        std::atomic<bool> alive{true};
+        std::uint64_t gen{0};
+        subscription timer;
+        subscription upstream;
+      };
+      auto st = std::make_shared<state>();
+      std::weak_ptr<state> w = st;
 
-    return observable<T>::create([src, d = d](auto on_next, auto on_err, auto on_done){
-      // is the "timeout timer" alive (reset on first event)
-      auto alive = std::make_shared<std::atomic<bool>>(true);
-
-      // watchdog thread - a simple but robust implementation for examples
-      std::thread([alive, d, on_err](){
-        std::this_thread::sleep_for(d);
-        if (alive->exchange(false, std::memory_order_acq_rel)) {
-          if (on_err) on_err(std::make_exception_ptr(std::runtime_error("timeout")));
+      auto arm = [w, d, on_err] {
+        auto s = w.lock();
+        if (!s || !s->alive) return;
+        std::uint64_t my;
+        subscription old;
+        {
+          std::lock_guard<std::mutex> lock(s->m);
+          my = ++s->gen;
+          old = std::move(s->timer);
         }
-      }).detach();
-
-      return src.subscribe(
-        // any event "extinguishes" the timer
-        [alive, on_next](const T& v){
-          if (alive->exchange(false, std::memory_order_acq_rel)) {
-            on_next(v);
-          } else {
-            // the timeout has already occurred - you can ignore/forward it as you wish
+        old.reset();
+        auto t = timer_service::instance().schedule_after(d, [w, my, on_err] {
+          auto s2 = w.lock();
+          if (!s2) return;
+          {
+            std::lock_guard<std::mutex> lock(s2->m);
+            if (s2->gen != my) return;
           }
-        },
-        [alive, on_err](std::exception_ptr e){
-          if (alive->exchange(false, std::memory_order_acq_rel)) {
+          if (!s2->alive.exchange(false)) return;
+          subscription up;
+          {
+            std::lock_guard<std::mutex> lock(s2->m);
+            up = std::move(s2->upstream);
+          }
+          up.reset();
+          if (on_err) on_err(std::make_exception_ptr(timeout_error{}));
+        });
+        std::lock_guard<std::mutex> lock(s->m);
+        if (s->gen == my) s->timer = std::move(t);
+      };
+
+      arm();
+      auto up = src.subscribe(
+          [w, on_next, arm](const T& v) {
+            auto s = w.lock();
+            if (!s || !s->alive) return;
+            arm();
+            if (on_next) on_next(v);
+          },
+          [w, on_err](std::exception_ptr e) {
+            auto s = w.lock();
+            if (!s || !s->alive.exchange(false)) return;
             if (on_err) on_err(e);
-          }
-        },
-        [alive, on_done]{
-          if (alive->exchange(false, std::memory_order_acq_rel)) {
+          },
+          [w, on_done] {
+            auto s = w.lock();
+            if (!s || !s->alive.exchange(false)) return;
             if (on_done) on_done();
-          }
+          });
+      {
+        std::lock_guard<std::mutex> lock(st->m);
+        if (st->alive) st->upstream = std::move(up);
+      }
+      up.reset(); // no-op unless the stream already terminated
+
+      return subscription([st] {
+        st->alive = false;
+        subscription t, up;
+        {
+          std::lock_guard<std::mutex> lock(st->m);
+          ++st->gen;
+          t = std::move(st->timer);
+          up = std::move(st->upstream);
         }
-      );
+        t.reset();
+        up.reset();
+      });
     });
   }
 };
 
 template <class Rep, class Period>
-inline auto timeout(std::chrono::duration<Rep,Period> d) { return op_timeout<Rep,Period>{ d }; }
+inline auto timeout(std::chrono::duration<Rep, Period> d) {
+  return op_timeout<Rep, Period>{d};
+}
 
 } // namespace pulse

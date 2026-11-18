@@ -22,9 +22,8 @@ function(pulse_add_test NAME)
   target_compile_features(${NAME} PRIVATE cxx_std_20)
   target_link_libraries(${NAME} PRIVATE ${PULSE_TARGET} Threads::Threads)
 
-  target_include_directories(${NAME} PRIVATE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
-  )
+  # Tests rely on assert(): keep it active in every configuration.
+  target_compile_options(${NAME} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
 
   add_test(NAME ${NAME} COMMAND $<TARGET_FILE:${NAME}>)
 
@@ -55,3 +54,8 @@ pulse_add_test(pulse_concat_map_tests                 concat_map_tests.cpp)
 pulse_add_test(pulse_subscribe_on_tests               subscribe_on_tests.cpp)
 pulse_add_test(pulse_merge_tests                      merge_tests.cpp)
 pulse_add_test(pulse_window_tests                     window_tests.cpp)
+pulse_add_test(pulse_signal_property_tests            signal_property_tests.cpp)
+pulse_add_test(pulse_subject_topic_tests              subject_topic_tests.cpp)
+pulse_add_test(pulse_regression_tests                 regression_tests.cpp)
+pulse_add_test(pulse_new_operators_tests              new_operators_tests.cpp)
+pulse_add_test(pulse_timer_service_tests              timer_service_tests.cpp)

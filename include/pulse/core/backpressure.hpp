@@ -7,6 +7,9 @@
 #include <deque>
 #include <thread>
 #include <chrono>
+#include <cstdint>
+#include <memory>
+#include <pulse/core/scheduler.hpp>
 
 namespace pulse {
 
@@ -71,6 +74,8 @@ class bp_buffer {
 public:
   explicit bp_buffer(std::size_t capacity = 64)
   : cap_(capacity ? capacity : 1) {}
+  // Copying transfers the configuration only (not the queued items).
+  bp_buffer(const bp_buffer& o) : cap_(o.cap_) {}
 
   template <class Executor, class Invoke>
   void publish(const T& v, Executor& ex, Invoke invoke) {
@@ -82,9 +87,7 @@ public:
         // if there was no active worker, you need to schedule one
         if (!scheduled_) { scheduled_ = true; should_schedule = true; }
       } else {
-        //TODO:
-        // Buffer full - drop (can be changed to front/back eviction)
-        // You can set a drop counter here for tracing
+        ++dropped_; // buffer full - drop the newest value
       }
     }
 
@@ -104,11 +107,14 @@ public:
     }
   }
 
+  std::size_t dropped() const noexcept { return dropped_; }
+
 private:
   std::mutex m_;
   std::deque<T> q_;
   std::size_t cap_;
   bool scheduled_{false};
+  std::size_t dropped_{0};
 };
 
 // ── "Buffer for N events" (compiler knows the capacity) ──────────────────────────
@@ -175,7 +181,7 @@ public:
           {
             std::lock_guard<std::mutex> lock(m_);
             if (buf_.size() < N) { scheduled_ = false; break; }
-            // взять ровно N элементов
+            // take exactly N elements
             for (std::size_t i = 0; i < N; ++i) {
               local[i] = std::move(buf_.front());
               buf_.pop_front();
@@ -194,7 +200,8 @@ private:
 };
 
 // Accumulates up to N elements and calls the handler N times in a single run.
-// If N elements are not accumulated within TimeoutMs, it resets the entire current buffer after a timeout.
+// If N elements are not accumulated within TimeoutMs after the first element of
+// a batch, everything accumulated so far is flushed.
 template <class T, std::size_t N, std::size_t TimeoutMs>
 class bp_batch_count_or_timeout_nms {
   static_assert(N > 0, "bp_batch_count_or_timeout_nms: N must be > 0");
@@ -203,97 +210,74 @@ public:
   void publish(const T& v, Executor& ex, Invoke invoke) {
     bool should_flush_batch = false;
     bool should_arm_timer   = false;
-
+    std::uint64_t gen = 0;
     {
-      std::lock_guard<std::mutex> lock(m_);
-      buf_.push_back(v);
-
-      // if we have collected exactly N, we will schedule a batch dump
-      if (buf_.size() == N && !scheduled_batch_) {
-        scheduled_batch_ = true;
+      std::lock_guard<std::mutex> lock(st_->m);
+      st_->buf.push_back(v);
+      if (st_->buf.size() >= N && !st_->scheduled_batch) {
+        st_->scheduled_batch = true;
         should_flush_batch = true;
       }
-
-      if (!timer_armed_) {
-        timer_armed_ = true;
-        last_push_   = clock::now();
+      if (!st_->timer_armed) {
+        st_->timer_armed = true;
         should_arm_timer = true;
-      } else {
-        last_push_ = clock::now();
+        gen = ++st_->gen;
       }
     }
 
     if (should_flush_batch) {
-      ex.post([this, inv = std::move(invoke)]() mutable { flush_batch(inv); });
+      ex.post([st = st_, inv = invoke]() mutable { flush(*st, inv, true); });
     }
-
     if (should_arm_timer) {
-      // lightweight detached timer; policy lives in shared_ptr -> safe
-      std::thread([this, &ex, inv = std::move(invoke)]() mutable {
-        using namespace std::chrono;
-        std::this_thread::sleep_for(milliseconds(TimeoutMs));
-        bool need_flush_timeout = false;
-        {
-          std::lock_guard<std::mutex> lock(m_);
-          // If no batch was created during the sleep time and the buffer is not empty, we drain it by timeout
-          if (!buf_.empty() && !scheduled_batch_) {
-            scheduled_timeout_ = true;
-            need_flush_timeout = true;
+      std::weak_ptr<shared_state> w = st_;
+      Executor* exp = &ex;
+      st_->timer = timer_service::instance().schedule_after(
+        std::chrono::milliseconds(TimeoutMs), [w, exp, gen, inv = invoke]() mutable {
+          auto st = w.lock();
+          if (!st) return;
+          {
+            std::lock_guard<std::mutex> lock(st->m);
+            if (st->gen != gen) return;
+            st->timer_armed = false;
+            if (st->buf.empty()) return;
           }
-        }
-        if (need_flush_timeout) {
-          ex.post([this, inv = std::move(inv)]() mutable { flush_timeout(inv); });
-        }
-        // unarm the timer
-        {
-          std::lock_guard<std::mutex> lock(m_);
-          timer_armed_ = false;
-          // if new elements arrived between sleep and unarm and this is the first timer -
-          // the next publish will arm the timer again.
-        }
-      }).detach();
+          exp->post([st, inv]() mutable { flush(*st, inv, false); });
+        });
     }
   }
 
 private:
-  using clock = std::chrono::steady_clock;
+  struct shared_state {
+    std::mutex m;
+    std::deque<T> buf;
+    bool scheduled_batch{false};
+    bool timer_armed{false};
+    std::uint64_t gen{0};
+    subscription timer;
+  };
 
   template <class Invoke>
-  void flush_batch(Invoke& inv) {
-    // we take exactly N elements and call the handler N times
-    std::array<T, N> local{};
-    {
-      std::lock_guard<std::mutex> lock(m_);
-      for (std::size_t i = 0; i < N; ++i) {
-        local[i] = std::move(buf_.front());
-        buf_.pop_front();
-      }
-      scheduled_batch_ = false;
-    }
-    for (std::size_t i = 0; i < N; ++i) inv(local[i]);
-  }
-
-  template <class Invoke>
-  void flush_timeout(Invoke& inv) {
-    // we take everything that has accumulated by the timeout
+  static void flush(shared_state& st, Invoke& inv, bool full_batches_only) {
     std::deque<T> local;
     {
-      std::lock_guard<std::mutex> lock(m_);
-      local.swap(buf_);
-      scheduled_timeout_ = false;
+      std::lock_guard<std::mutex> lock(st.m);
+      if (full_batches_only) {
+        while (st.buf.size() >= N) {
+          for (std::size_t i = 0; i < N; ++i) {
+            local.push_back(std::move(st.buf.front()));
+            st.buf.pop_front();
+          }
+        }
+        st.scheduled_batch = false;
+        if (st.buf.empty()) { st.timer_armed = false; ++st.gen; }
+      } else {
+        local.swap(st.buf);
+      }
     }
     for (auto& x : local) inv(x);
   }
 
-  std::mutex m_;
-  std::deque<T> buf_;
-  bool scheduled_batch_{false};
-  bool scheduled_timeout_{false};
-  bool timer_armed_{false};
-  clock::time_point last_push_{};
+  std::shared_ptr<shared_state> st_ = std::make_shared<shared_state>();
 };
-
-
-
 
 } // namespace pulse
