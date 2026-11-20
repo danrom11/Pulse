@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Pulse VERSION 0.2.0 LANGUAGES CXX)
+project(Pulse VERSION 0.2.1 LANGUAGES CXX)
 
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in
@@ -96,7 +96,10 @@ if(PULSE_BUILD_TESTS)
   add_subdirectory(tests)
 
   add_custom_target(check
-    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -C $<CONFIG>
+    # -C only when there is a configuration: single-config generators (Makefiles,
+    # Ninja) without CMAKE_BUILD_TYPE have an empty $<CONFIG>
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure "$<$<BOOL:$<CONFIG>>:-C;$<CONFIG>>"
+    COMMAND_EXPAND_LISTS
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     USES_TERMINAL
     COMMENT "Running Pulse tests"

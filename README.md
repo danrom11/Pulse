@@ -5,6 +5,20 @@ It allows you to connect parts of your application with data streams (`observabl
 
 ---
 
+## 📚 Documentation
+
+The full guide and reference live in [`docs/`](docs/README.md):
+
+- **Guide:** [introduction and mental model](docs/01-introduction.md) · [getting started](docs/02-getting-started.md) ·
+  [observables](docs/03-observables.md) · [subscriptions and lifetime](docs/04-subscriptions.md) ·
+  [signals, properties, computed](docs/05-signals-and-properties.md) · [hot sources](docs/06-hot-sources.md)
+- **Reference:** [all operators](docs/07-operators.md) · [threads and time](docs/08-threading-and-time.md) ·
+  [backpressure](docs/09-backpressure.md) · [errors](docs/10-errors.md) · [sharing](docs/11-sharing.md) ·
+  [Qt adapter](docs/12-qt-adapter.md)
+- **Practice:** [patterns and pitfalls](docs/13-patterns-and-pitfalls.md) · [cheat sheet](docs/14-cheatsheet.md)
+
+---
+
 ## ✨ Features
 
 - `observable<T>` — data stream of any type, plus sources: `just`, `from`, `range`, `empty`, `never`, `error`, `defer`
@@ -405,6 +419,11 @@ Pull requests are welcome!
 ---
 
 ## 📝 Changelog
+
+### 0.2.1
+- Fix: `cmake --build build --target check` failed with "Invalid value used with -C" on single-configuration
+  generators (Makefiles, Ninja) when `CMAKE_BUILD_TYPE` was not set.
+- Complete documentation in [`docs/`](docs/README.md): a guide, the reference of every operator, patterns and a cheat sheet.
 
 ### 0.2.0
 
